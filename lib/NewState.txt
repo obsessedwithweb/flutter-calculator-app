@@ -1,0 +1,272 @@
+class _CalculatorScreenState extends State<CalculatorScreen> {
+  String _display = '0';
+  String _history = '';
+  double? _firstOperand;
+  String? _operation;
+  bool _shouldClearDisplay = true;
+  double _memory = 0;
+
+  final FocusNode _focusNode = FocusNode();
+
+  @override
+  void initState() {
+    super.initState();
+  }
+
+  @override
+  void dispose() {
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  KeyEventResult _handleKeyEvent(FocusNode node, KeyEvent event) {
+    if (event is KeyDownEvent) {
+      final key = event.logicalKey;
+      String keyLabel = key.keyLabel;
+
+      if ('0123456789.'.contains(keyLabel)) {
+        _onButtonPressed(keyLabel);
+      } else if (key == LogicalKeyboardKey.enter || key == LogicalKeyboardKey.equal) {
+        _onButtonPressed('=');
+      } else if (key == LogicalKeyboardKey.backspace) {
+        _onButtonPressed('⌫');
+      } else if (keyLabel == '+') {
+        _onButtonPressed('+');
+      } else if (keyLabel == '-') {
+        _onButtonPressed('-');
+      } else if (keyLabel == '*') {
+        _onButtonPressed('×');
+      } else if (keyLabel == '/') {
+        _onButtonPressed('÷');
+      } else if (key.keyLabel.toLowerCase() == 'c') {
+        _onButtonPressed('C');
+      }
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
+
+  void _onButtonPressed(String buttonText) {
+    setState(() {
+      if ('0123456789.'.contains(buttonText)) {
+        _handleDigitInput(buttonText);
+      } else if ('+-×÷'.contains(buttonText)) {
+        _handleOperatorInput(buttonText);
+      } else if (buttonText == '=') {
+        _handleEquals();
+      } else if (buttonText == 'C') {
+        _handleClear();
+      } else if (buttonText == '⌫') {
+        _handleBackspace();
+      } else if (buttonText == 'M') {
+        _display = _formatResult(_memory);
+        _shouldClearDisplay = true;
+      } else if (buttonText == 'M+') {
+        _memory += double.tryParse(_display) ?? 0;
+      } else if (buttonText == 'M-') {
+        _memory -= double.tryParse(_display) ?? 0;
+      }
+    });
+  }
+
+  void _handleDigitInput(String digit) {
+    if (_shouldClearDisplay) {
+      _display = (digit == '.') ? '0.' : digit;
+      _shouldClearDisplay = false;
+    } else {
+      if (digit == '.' && _display.contains('.')) return;
+      _display += digit;
+    }
+  }
+
+  // --- BUG FIX APPLIED HERE ---
+  void _handleOperatorInput(String op) {
+    // If first operand is null, OR we just finished a calc (shouldClear),
+    // OR there is no pending operator (null), treat this as starting a NEW operation.
+    if (_firstOperand == null || _shouldClearDisplay || _operation == null) {
+      _firstOperand = double.tryParse(_display);
+    } else {
+      _calculate();
+    }
+    _operation = op;
+    _history = '${_formatResult(_firstOperand!)} $_operation';
+    _shouldClearDisplay = true;
+  }
+
+  void _handleEquals() {
+    if (_firstOperand == null || _operation == null) return;
+    _calculate();
+    _history = '';
+    _operation = null;
+    _shouldClearDisplay = true;
+  }
+
+  void _calculate() {
+    if (_shouldClearDisplay && _operation != null) return;
+    double secondOperand = double.tryParse(_display) ?? 0;
+    double result = 0;
+
+    if (_operation != null) {
+      switch (_operation) {
+        case '+':
+          result = _firstOperand! + secondOperand;
+          break;
+        case '-':
+          result = _firstOperand! - secondOperand;
+          break;
+        case '×':
+          result = _firstOperand! * secondOperand;
+          break;
+        case '÷':
+          result = secondOperand != 0 ? _firstOperand! / secondOperand : double.nan;
+          break;
+      }
+    }
+
+    _display = result.isNaN ? 'Error' : _formatResult(result);
+    _firstOperand = result.isNaN ? null : result;
+  }
+
+  void _handleClear() {
+    _display = '0';
+    _history = '';
+    _firstOperand = null;
+    _operation = null;
+    _shouldClearDisplay = true;
+  }
+
+  void _handleBackspace() {
+    if (_shouldClearDisplay) return;
+    if (_display.length > 1) {
+      _display = _display.substring(0, _display.length - 1);
+    } else {
+      _display = '0';
+      _shouldClearDisplay = true;
+    }
+  }
+
+  String _formatResult(double value) {
+    if (value.isNaN) return 'Error';
+    if (value == value.toInt()) {
+      return value.toInt().toString();
+    } else {
+      return value.toString();
+    }
+  }
+
+  Widget _buildButtonRow(List<String> buttons) {
+    return Expanded(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: buttons.map((text) {
+          return Expanded(
+            child: CalculatorButton(
+              text: text,
+              onPressed: () => _onButtonPressed(text),
+              isOperator: '+-×÷='.contains(text),
+              isAction: 'C⌫'.contains(text),
+              isMemory: 'M M+ M-'.contains(text),
+            ),
+          );
+        }).toList(),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: Focus(
+        focusNode: _focusNode,
+        autofocus: true,
+        onKeyEvent: _handleKeyEvent,
+        child: Column(
+          children: [
+            Expanded(
+              flex: 2,
+              child: Container(
+                padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+                alignment: Alignment.bottomRight,
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    FittedBox(
+                      fit: BoxFit.contain,
+                      child: Text(
+                        _history,
+                        style: const TextStyle(fontSize: 24, color: Colors.white54),
+                        maxLines: 1,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    FittedBox(
+                      fit: BoxFit.contain,
+                      // --- UPGRADED PRO ANIMATION ---
+                      child: AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 300), // Slightly slower for smoothness
+                        // easeOutExpo is the secret to "Pro" feel. It decelerates cleanly.
+                        switchInCurve: Curves.easeOutExpo,
+                        switchOutCurve: Curves.easeInExpo,
+                        transitionBuilder: (Widget child, Animation<double> animation) {
+                          // The 'offset' creates a subtle slide-up effect
+                          final offsetAnimation = Tween<Offset>(
+                            begin: const Offset(0.0, 0.5), // Starts slightly below
+                            end: Offset.zero,
+                          ).animate(animation);
+
+                          return FadeTransition(
+                            opacity: animation,
+                            child: SlideTransition(
+                              position: offsetAnimation,
+                              child: child,
+                            ),
+                          );
+                        },
+                        // We use a SizedBox to prevent the text from jumping size during transition
+                        layoutBuilder: (currentChild, previousChildren) {
+                          return Stack(
+                            alignment: Alignment.centerRight,
+                            children: <Widget>[
+                              ...previousChildren,
+                              if (currentChild != null) currentChild,
+                            ],
+                          );
+                        },
+                        child: Text(
+                          _display,
+                          // Key matches value to trigger animation on change
+                          key: ValueKey<String>(_display),
+                          style: const TextStyle(
+                            fontSize: 64,
+                            color: Colors.white,
+                            fontFamily: 'Courier', // Monospace font helps reduce jitter (optional)
+                          ),
+                          maxLines: 1,
+                        ),
+                      ),
+                      // --- END ANIMATION ---
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            Expanded(
+              flex: 3,
+              child: Column(
+                children: [
+                  _buildButtonRow(['C', '⌫', 'M', '÷']),
+                  _buildButtonRow(['7', '8', '9', '×']),
+                  _buildButtonRow(['4', '5', '6', '-']),
+                  _buildButtonRow(['1', '2', '3', '+']),
+                  _buildButtonRow(['M+', '0', 'M-', '=']),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
