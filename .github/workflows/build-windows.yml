@@ -43,6 +43,12 @@ jobs:
       - name: Build Windows app
         run: flutter build windows --release
 
+      - name: Create MSI installer (optional)
+        run: |
+          choco install wixtoolset -y
+          # Add WiX tooling to create MSI here
+        continue-on-error: true
+
       - name: Create archive
         run: |
           $appName = (Get-Content pubspec.yaml | Select-String -Pattern '^name:').Line.Split(':')[1].Trim()
@@ -50,15 +56,16 @@ jobs:
           $archiveName = "$appName-$version-windows.zip"
           Compress-Archive -Path build\windows\x64\runner\Release\* -DestinationPath $archiveName
           echo "ARCHIVE_NAME=$archiveName" >> $env:GITHUB_ENV
+          echo "APP_VERSION=$version" >> $env:GITHUB_ENV
 
-      - name: Upload build artifact
+      - name: Upload build artifact (always available)
         uses: actions/upload-artifact@v4
         with:
-          name: windows-release
+          name: windows-release-${{ env.APP_VERSION }}
           path: ${{ env.ARCHIVE_NAME }}
-          retention-days: 30
+          retention-days: 90
 
-      - name: Create Release
+      - name: Create GitHub Release (only on tags)
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v1
         with:
@@ -66,5 +73,35 @@ jobs:
           draft: false
           prerelease: false
           generate_release_notes: true
+          body: |
+            ## Windows Release ${{ github.ref_name }}
+
+            Download the ZIP file below, extract it, and run the .exe file.
+
+            **What's included:**
+            - Executable (.exe)
+            - Required DLLs and dependencies
+            - Data folder with assets
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create automatic release (on main branch push)
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: "latest-${{ github.sha }}"
+          name: "Latest Build (Main Branch)"
+          files: ${{ env.ARCHIVE_NAME }}
+          draft: false
+          prerelease: true
+          body: |
+            ## Automatic Build from Main Branch
+
+            This is an automatically generated build from the latest main branch commit.
+
+            **Commit:** ${{ github.sha }}
+            **Date:** ${{ github.event.head_commit.timestamp }}
+
+            Download the ZIP file, extract it, and run the .exe file.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
