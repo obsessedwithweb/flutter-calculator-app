@@ -246,6 +246,10 @@ class _CalculatorScreenState extends State<CalculatorScreen> {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: buttons.map((text) {
+          if (text.isEmpty) {
+            // Empty slot for spacing
+            return const Expanded(child: SizedBox());
+          }
           return Expanded(
             child: CalculatorButton(
               text: text,
@@ -257,6 +261,22 @@ class _CalculatorScreenState extends State<CalculatorScreen> {
             ),
           );
         }).toList(),
+      ),
+    );
+  }
+
+  Widget _buildFullWidthButtonRow(String buttonText) {
+    return Expanded(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 0),
+        child: CalculatorButton(
+          text: buttonText,
+          onPressed: () => _onButtonPressed(buttonText),
+          isOperator: '+-×÷='.contains(buttonText),
+          isAction: 'C⌫'.contains(buttonText),
+          isMemory: 'M M+ M-'.contains(buttonText),
+          isPressed: _pressedButton == buttonText,
+        ),
       ),
     );
   }
@@ -357,7 +377,9 @@ class _CalculatorScreenState extends State<CalculatorScreen> {
 
                   _buildButtonRow(['1', '2', '3', '+']),
 
-                  _buildButtonRow(['M+', '0', '.', '=']),
+                  _buildButtonRow(['M+', '0', 'M-', '.']),
+
+                  _buildFullWidthButtonRow('='),
 
                 ],
 
