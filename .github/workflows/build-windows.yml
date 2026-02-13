@@ -4,13 +4,8 @@ on:
   push:
     branches:
       - main
-      - master
     tags:
       - 'v*.*.*'
-  pull_request:
-    branches:
-      - main
-      - master
   workflow_dispatch:
 
 permissions:
@@ -19,92 +14,100 @@ permissions:
 jobs:
   build-windows:
     runs-on: windows-latest
-
+    
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
+      
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
+          flutter-version: 'stable'
           channel: 'stable'
-          cache: true
-
-      - name: Flutter doctor
-        run: flutter doctor -v
-
-      - name: Enable Windows desktop
-        run: flutter config --enable-windows-desktop
-
+      
       - name: Get dependencies
         run: flutter pub get
-
-      - name: Analyze code
-        run: flutter analyze
-        continue-on-error: true
-
+      
       - name: Build Windows app
         run: flutter build windows --release
-
-      - name: Create MSI installer (optional)
+      
+      # Get app version from pubspec.yaml
+      - name: Get version
+        id: version
+        run: |
+          $version = Select-String -Path pubspec.yaml -Pattern "version: (.+)" | ForEach-Object { $_.Matches.Groups[1].Value }
+          echo "APP_VERSION=$version" >> $env:GITHUB_OUTPUT
+      
+      # Create ZIP archive
+      - name: Create ZIP archive
+        run: |
+          $appName = (Select-String -Path pubspec.yaml -Pattern "name: (.+)" | ForEach-Object { $_.Matches.Groups[1].Value }).Trim()
+          Compress-Archive -Path build\windows\x64\runner\Release\* -DestinationPath "$appName-${{ steps.version.outputs.APP_VERSION }}-windows.zip"
+      
+      # Install WiX Toolset for MSI creation
+      - name: Install WiX Toolset
         run: |
           choco install wixtoolset -y
-          # Add WiX tooling to create MSI here
-        continue-on-error: true
-
-      - name: Create archive
+          echo "C:\Program Files (x86)\WiX Toolset v3.11\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      
+      # Create MSI installer
+      - name: Create MSI installer
         run: |
-          $appName = (Get-Content pubspec.yaml | Select-String -Pattern '^name:').Line.Split(':')[1].Trim()
-          $version = (Get-Content pubspec.yaml | Select-String -Pattern '^version:').Line.Split(':')[1].Trim().Split('+')[0]
-          $archiveName = "$appName-$version-windows.zip"
-          Compress-Archive -Path build\windows\x64\runner\Release\* -DestinationPath $archiveName
-          echo "ARCHIVE_NAME=$archiveName" >> $env:GITHUB_ENV
-          echo "APP_VERSION=$version" >> $env:GITHUB_ENV
-
-      - name: Upload build artifact (always available)
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-release-${{ env.APP_VERSION }}
-          path: ${{ env.ARCHIVE_NAME }}
-          retention-days: 90
-
-      - name: Create GitHub Release (only on tags)
-        if: startsWith(github.ref, 'refs/tags/')
+          $appName = (Select-String -Path pubspec.yaml -Pattern "name: (.+)" | ForEach-Object { $_.Matches.Groups[1].Value }).Trim()
+          $version = "${{ steps.version.outputs.APP_VERSION }}"
+          $buildDir = "build\windows\x64\runner\Release"
+          
+          # Create WiX source file
+          @"
+          <?xml version="1.0" encoding="UTF-8"?>
+          <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+            <Product Id="*" Name="$appName" Language="1033" Version="$version" Manufacturer="YourCompany" UpgradeCode="YOUR-GUID-HERE">
+              <Package InstallerVersion="200" Compressed="yes" InstallScope="perMachine" />
+              <MajorUpgrade DowngradeErrorMessage="A newer version is already installed." />
+              <MediaTemplate EmbedCab="yes" />
+              
+              <Feature Id="ProductFeature" Title="$appName" Level="1">
+                <ComponentGroupRef Id="ProductComponents" />
+              </Feature>
+              
+              <Directory Id="TARGETDIR" Name="SourceDir">
+                <Directory Id="ProgramFilesFolder">
+                  <Directory Id="INSTALLFOLDER" Name="$appName" />
+                </Directory>
+                <Directory Id="ProgramMenuFolder">
+                  <Directory Id="ApplicationProgramsFolder" Name="$appName"/>
+                </Directory>
+              </Directory>
+              
+              <ComponentGroup Id="ProductComponents" Directory="INSTALLFOLDER">
+                <Component Id="MainExecutable" Guid="*">
+                  <File Id="AppExe" Source="$buildDir\$appName.exe" KeyPath="yes">
+                    <Shortcut Id="StartMenuShortcut" Directory="ApplicationProgramsFolder" Name="$appName" WorkingDirectory="INSTALLFOLDER" Icon="AppIcon.exe" IconIndex="0" Advertise="yes" />
+                  </File>
+                </Component>
+                <Component Id="DataFolder" Guid="*">
+                  <File Id="DataLib" Source="$buildDir\flutter_windows.dll" KeyPath="yes" />
+                </Component>
+              </ComponentGroup>
+              
+              <Icon Id="AppIcon.exe" SourceFile="$buildDir\$appName.exe" />
+            </Product>
+          </Wix>
+          "@ | Out-File -FilePath installer.wxs -Encoding UTF8
+          
+          # Compile and link
+          candle.exe installer.wxs
+          light.exe -ext WixUIExtension installer.wixobj -out "$appName-$version-windows.msi"
+      
+      # Create/Update Release
+      - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          files: ${{ env.ARCHIVE_NAME }}
+          tag_name: ${{ github.ref_name }}
+          files: |
+            *.zip
+            *.msi
           draft: false
           prerelease: false
-          generate_release_notes: true
-          body: |
-            ## Windows Release ${{ github.ref_name }}
-
-            Download the ZIP file below, extract it, and run the .exe file.
-
-            **What's included:**
-            - Executable (.exe)
-            - Required DLLs and dependencies
-            - Data folder with assets
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Create automatic release (on main branch push)
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-        uses: softprops/action-gh-release@v1
-        with:
-          tag_name: "latest-${{ github.sha }}"
-          name: "Latest Build (Main Branch)"
-          files: ${{ env.ARCHIVE_NAME }}
-          draft: false
-          prerelease: true
-          body: |
-            ## Automatic Build from Main Branch
-
-            This is an automatically generated build from the latest main branch commit.
-
-            **Commit:** ${{ github.sha }}
-            **Date:** ${{ github.event.head_commit.timestamp }}
-
-            Download the ZIP file, extract it, and run the .exe file.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
